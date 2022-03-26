@@ -4,6 +4,7 @@
         "uefi.h": "c",
         "printlib.h": "c",
         "uefibasetype.h": "c",
-        "base.h": "c"
+        "base.h": "c",
+        "new": "cpp"
     }
 }
