@@ -5,6 +5,8 @@
         "printlib.h": "c",
         "uefibasetype.h": "c",
         "base.h": "c",
-        "new": "cpp"
+        "new": "cpp",
+        "numeric": "cpp",
+        "array": "cpp"
     }
 }

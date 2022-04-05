@@ -62,7 +62,7 @@ inline uint16_t ReadVendorId(const Device& dev) {
 
 /** 指定された PCI デバイスの 32 ビットレジスタを読み取る */
 uint32_t ReadConfReg(const Device& dev, uint8_t reg_addr);
-
+/** 指定された PCI デバイスの 32 ビットレジスタに書き込む */
 void WriteConfReg(const Device& dev, uint8_t reg_addr, uint32_t value);
 
 /** 単一ファンクションの場合に真を返す */
@@ -81,5 +81,66 @@ constexpr uint8_t CalcBarAddress(unsigned int bar_index) {
 }
 
 WithError<uint64_t> ReadBar(Device& device, unsigned int bar_index);
+
+/** PCI ケーパビリティレジスタの共通ヘッダ */
+union CapabilityHeader {
+    uint32_t data;
+    struct {
+        uint32_t cap_id : 8;
+        uint32_t next_ptr : 8;
+        uint32_t cap : 16;
+    } __attribute__((packed)) bits;
+} __attribute__((packed));
+
+const uint8_t kCapabilityMSI = 0x05;
+const uint8_t kCapabilityMSIX = 0x11;
+
+/** 指定された PCI デバイスの指定されたケーパビリティレジスタを読み込む */
+CapabilityHeader ReadCapabilityHeader(const Device& dev, uint8_t addr);
+
+/** MSI ケーパビリティ構造 */
+struct MSICapability {
+    union {
+        uint32_t data;
+        struct {
+            uint32_t cap_id : 8;
+            uint32_t next_ptr : 8;
+            uint32_t msi_enable : 1;
+            uint32_t multi_msg_capable : 3;
+            uint32_t multi_msg_enable : 3;
+            uint32_t addr_64_capable : 1;
+            uint32_t per_vector_mask_capable : 1;
+            uint32_t : 7;
+        } __attribute__((packed)) bits;
+    } __attribute__((packed)) header;
+
+    uint32_t msg_addr;
+    uint32_t msg_upper_addr;
+    uint32_t msg_data;
+    uint32_t mask_bits;
+    uint32_t pending_bits;
+} __attribute__((packed));
+
+/** MSI または MSI-X 割り込みを設定する*/
+Error ConfigureMSI(const Device& dev, uint32_t msg_addr, uint32_t msg_data, unsigned int num_vector_exponent);
+
+enum class MSITriggerMode {
+    kEdge = 0,
+    kLevel = 1,
+};
+
+enum class MSIDeliveryMode {
+    kFixed          = 0b000,
+    kLowestPriority = 0b001,
+    kSMI            = 0b010,
+    KNMI            = 0b100,
+    KINIT           = 0b101,
+    kExtINT         = 0b111,
+};
+
+Error ConfigureMSIFixedDestination(
+    const Device& dev, uint8_t apic_id,
+    MSITriggerMode trigger_mode, MSIDeliveryMode delivery_mode,
+    uint8_t vector, unsigned int num_vector_exponent);
 
 }
