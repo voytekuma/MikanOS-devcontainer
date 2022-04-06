@@ -26,6 +26,7 @@
 #include "usb/xhci/trb.hpp"
 #include "interrupt.hpp"
 #include "asmfunc.h"
+#include "queue.hpp"
 
 const PixelColor kDesktopBGColor{45, 118, 237};
 const PixelColor kDesktopFGColor{255, 255, 255};
@@ -75,17 +76,22 @@ void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
     Log(kDebug, "SwitchEhci2Xhci: SS = %02, xHCI = %02x\n", superspeed_ports, ehci2xhci_ports);
 }
 
+// #@@range_begin(queue_message)
+struct Message {
+    enum Type {
+        kInterruptXHCI,
+    } type;
+};
+
+ArrayQueue<Message>* main_queue;
+// #@@range_end(queue_message)
+
 // #@@range_begin(xchi_handler)
 usb::xhci::Controller* xhc;
 
 __attribute__((interrupt))
 void IntHandlerXHCI(InterruptFrame* frame) {
-    while (xhc->PrimaryEventRing()->HasFront()) {
-        if (auto err = ProcessEvent(*xhc)) {
-            Log(kError, "Error while ProcessEvent: %s at %s:%d\n",
-                err.Name(), err.File(), err.Line());
-        }
-    }
+    main_queue->Push(Message{Message::kInterruptXHCI});
     NotifyEndOfInterrupt();
 }
 // #@@range_end(xhci_handler)
@@ -116,6 +122,10 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
     mouse_cursor = new(mouse_cursor_buf) MouseCursor{
         pixel_writer, kDesktopBGColor, {300, 200}
     };
+
+    std::array<Message, 32> main_queue_data;
+    ArrayQueue<Message> main_queue{main_queue_data};
+    ::main_queue = &main_queue;
 
     auto err = pci::ScanAllBus();
     printk("ScanAllBus: %s\n", err.Name());
@@ -178,7 +188,6 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
     xhc.Run();
 
     ::xhc = &xhc;
-    __asm__("sti");
 
     usb::HIDMouseDriver::default_observer = MouseObserver;
 
@@ -195,7 +204,34 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
         }
     }
 
-    while (1) __asm__("hlt");
+    // #@@range_begin(event_loop)
+    while (true) {
+        // #@@range_begin(get_front_message)
+        __asm__("cli");
+        if (main_queue.Count() == 0) {
+            __asm__("sti\n\thlt");
+            continue;
+        }
+
+        Message msg = main_queue.Front();
+        main_queue.Pop();
+        __asm__("sti");
+        // #@@range_end(get_front_message)
+
+        switch (msg.type) {
+            case Message::kInterruptXHCI:
+                while (xhc.PrimaryEventRing()->HasFront()) {
+                    if (auto err = ProcessEvent(xhc)) {
+                        Log(kError, "Error while ProcessEvent: %s at %s:%d\n",
+                            err.Name(), err.File(), err.Line());
+                    }
+                }
+                break;
+            default:
+                Log(kError, "Unknown message type: %d\n", msg.type);
+        }
+    }
+    // #@@range_end(event_loop)
 }
 
 extern "C" void __cxa_pure_virtual() {
